@@ -31,6 +31,7 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "model": "",
     "router_model": "qwen2.5:7b-instruct",
+    "debug_mode": True,
     "show_intercepts": False,
     "input_token_cost_per_m": 0.0,
     "output_token_cost_per_m": 0.0,
@@ -427,12 +428,19 @@ class BridgeApp(tk.Tk):
         self.status_badge.pack(side=tk.LEFT)
 
         self.show_intercepts_var = tk.BooleanVar(value=False)
+        self.debug_mode_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             status_row,
             text="Show intercepts in logger",
             variable=self.show_intercepts_var,
             command=self._on_toggle_intercepts,
         ).pack(side=tk.RIGHT)
+
+        ttk.Checkbutton(
+            status_row,
+            text="Backend debug mode",
+            variable=self.debug_mode_var,
+        ).pack(side=tk.RIGHT, padx=(0, 12))
 
         btn_row = ttk.Frame(panel, style="Card.TFrame")
         btn_row.grid(row=2, column=0, columnspan=4, sticky="we", pady=(14, 0))
@@ -544,6 +552,7 @@ class BridgeApp(tk.Tk):
         self.output_token_cost_var.set(str(cfg.get("output_token_cost_per_m", DEFAULT_CONFIG["output_token_cost_per_m"])))
         self.key_var.set(cfg.get("api_key", ""))
         self.base_var.set(cfg.get("base_url", ""))
+        self.debug_mode_var.set(bool(cfg.get("debug_mode", DEFAULT_CONFIG["debug_mode"])))
         self.show_intercepts_var.set(bool(cfg.get("show_intercepts", DEFAULT_CONFIG["show_intercepts"])))
         self._on_mode_changed()
         self._seed_seen_intercepts()
@@ -558,6 +567,7 @@ class BridgeApp(tk.Tk):
             "api_key": self.key_var.get().strip(),
             "model": self.model_var.get().strip(),
             "router_model": self.router_model_var.get().strip() or DEFAULT_CONFIG["router_model"],
+            "debug_mode": bool(self.debug_mode_var.get()),
             "show_intercepts": bool(self.show_intercepts_var.get()),
             "input_token_cost_per_m": self._to_float(self.input_token_cost_var.get()),
             "output_token_cost_per_m": self._to_float(self.output_token_cost_var.get()),
