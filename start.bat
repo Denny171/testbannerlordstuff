@@ -741,27 +741,35 @@ function Run-Installer {
     $null = Start-Process -FilePath "$ollamaExe" -ArgumentList "serve" -WindowStyle Hidden -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
-    # Let user choose Ollama model to pull
+    # Let user choose Ollama model only when config does not already specify one
     $existingCfg = Load-Config
     $defaultRouterModel = "qwen2.5:0.5b"
+    $hasConfiguredRouterModel = $false
     if ($existingCfg -and -not [string]::IsNullOrWhiteSpace("$($existingCfg.router_model)")) {
         $defaultRouterModel = "$($existingCfg.router_model)".Trim()
+        $hasConfiguredRouterModel = $true
     }
 
-    Clear-Host
-    Draw-Banner
-    Write-Host "  [3/$TOTAL]  Ollama model setup" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  Enter the Ollama model to pull:" -ForegroundColor DarkGray
-    Write-Host "  Press ENTER to use default: $defaultRouterModel" -ForegroundColor DarkGray
-    Write-Host ""
-    Write-Host "  Model: " -NoNewline -ForegroundColor Cyan
-    $userModelInput = Read-Host
-
-    $selectedRouterModel = if ([string]::IsNullOrWhiteSpace($userModelInput)) {
-        $defaultRouterModel
+    if ($hasConfiguredRouterModel) {
+        $selectedRouterModel = $defaultRouterModel
+        Write-Host "  Using configured Ollama model from config.json: $selectedRouterModel" -ForegroundColor DarkGray
+        Start-Sleep -Milliseconds 700
     } else {
-        $userModelInput.Trim()
+        Clear-Host
+        Draw-Banner
+        Write-Host "  [3/$TOTAL]  Ollama model setup" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  Enter the Ollama model to pull:" -ForegroundColor DarkGray
+        Write-Host "  Press ENTER to use default: $defaultRouterModel" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Model: " -NoNewline -ForegroundColor Cyan
+        $userModelInput = Read-Host
+
+        $selectedRouterModel = if ([string]::IsNullOrWhiteSpace($userModelInput)) {
+            $defaultRouterModel
+        } else {
+            $userModelInput.Trim()
+        }
     }
 
     # Pull model
