@@ -876,6 +876,36 @@ function Run-Launcher {
             }
             Save-Config $cfg
         }
+        "5" {
+            $guiExe = Join-Path $ScriptDir "bridgegui.exe"
+            $guiPy  = Join-Path $ScriptDir "bridgegui.py"
+
+            if (Test-Path $guiExe) {
+                try {
+                    Start-Process -FilePath $guiExe -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+                    return
+                } catch {
+                    Write-Host "  Failed to launch bridgegui.exe: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+
+            if (Test-Path $guiPy) {
+                $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
+                $pyExe = if ($pyCmd -and (Test-Path $pyCmd.Source)) { $pyCmd.Source } else { "python" }
+                try {
+                    Start-Process -FilePath $pyExe -ArgumentList "`"$guiPy`"" -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+                    return
+                } catch {
+                    Write-Host "  Failed to launch bridgegui.py: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "  Falling back to console launcher..." -ForegroundColor Yellow
+                    Start-Sleep -Milliseconds 900
+                }
+            } else {
+                Write-Host "  GUI file not found (bridgegui.exe or bridgegui.py)." -ForegroundColor Yellow
+                Write-Host "  Falling back to console launcher..." -ForegroundColor Yellow
+                Start-Sleep -Milliseconds 900
+            }
+        }
         "6" {
             # Run installer manually (will trigger Github sync/re-installation)
             Run-Installer
