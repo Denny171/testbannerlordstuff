@@ -28,7 +28,7 @@ DEFAULT_CONFIG = {
     "base_url": "http://127.0.0.1:4315/v1",
     "api_key": "",
     "model": "",
-    "router_model": "qwen2.5:7b-instruct",
+    "router_model": "qwen2.5:0.5b",
     "debug_mode": True,
     "show_intercepts": False,
     "input_token_cost_per_m": 0.0,
