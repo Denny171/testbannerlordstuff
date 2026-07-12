@@ -104,38 +104,96 @@ function Save-Config($cfg) {
     $cfg | ConvertTo-Json | Out-File -FilePath $ConfigPath -Encoding UTF8
 }
 
+function Load-Tokens {
+    if (Test-Path $TokensPath) {
+        return Get-Content $TokensPath -Encoding UTF8 | ConvertFrom-Json
+    }
+    return [pscustomobject]@{ total_tokens = 0; session_tokens = 0; total_saved_tokens = 0; session_saved_tokens = 0 }
+}
+
+function Save-Tokens($t) {
+    $t | ConvertTo-Json | Out-File -FilePath $TokensPath -Encoding UTF8
+}
+
 function Start-GUI {
     $guiExe = Join-Path $ScriptDir "bridgegui.exe"
     $guiPy  = Join-Path $ScriptDir "bridgegui.py"
 
+    function Start-GuiPython {
+        if (-not (Test-Path $guiPy)) {
+            return $false
+        }
+        $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
+        $pyExe = if ($pyCmd -and (Test-Path $pyCmd.Source)) { $pyCmd.Source } else { "python" }
+        try {
+            Start-Process -FilePath $pyExe -ArgumentList "`"$guiPy`"" -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+            return $true
+        } catch {
+            Write-Host "  Failed to launch bridgegui.py: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
+        }
+    }
+
     if (Test-Path $guiExe) {
         try {
             $exeProc = Start-Process -FilePath $guiExe -WorkingDirectory $ScriptDir -PassThru -ErrorAction Stop
+            # Start-Process can succeed even if the app immediately crashes (e.g. 0xc0000142).
             Start-Sleep -Milliseconds 1200
             $exeProc.Refresh()
             if (-not $exeProc.HasExited) {
                 return $true
             }
+
             Write-Host "  bridgegui.exe exited immediately (code $($exeProc.ExitCode)). Falling back to Python GUI..." -ForegroundColor Yellow
+            if (Start-GuiPython) {
+                return $true
+            }
         } catch {
             Write-Host "  Failed to launch bridgegui.exe: $($_.Exception.Message)" -ForegroundColor Red
+            if (Start-GuiPython) {
+                return $true
+            }
         }
     }
 
-    if (Test-Path $guiPy) {
-        try {
-            $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
-            $pyExe = if ($pyCmd -and (Test-Path $pyCmd.Source)) { $pyCmd.Source } else { "python" }
-            Start-Process -FilePath $pyExe -ArgumentList "`"$guiPy`"" -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
-            return $true
-        } catch {
-            Write-Host "  Failed to launch bridgegui.py: $($_.Exception.Message)" -ForegroundColor Red
-        }
+    if (Start-GuiPython) {
+        return $true
     }
 
     Write-Host "  GUI file not found (bridgegui.exe or bridgegui.py)." -ForegroundColor Yellow
     return $false
 }
+
+function Draw-ConfigBlock($cfg) {
+    Write-Host "  Current backend configuration:" -ForegroundColor DarkGray
+    Write-Host ""
+    if ($cfg.mode -eq "player2") {
+        Write-Host "    Backend   :  " -NoNewline -ForegroundColor DarkGray
+        Write-Host "Player 2  (local)" -ForegroundColor Cyan
+        Write-Host "    Endpoint  :  http://127.0.0.1:4315" -ForegroundColor DarkGray
+        $routerModel = "$($cfg.router_model)"
+        if ([string]::IsNullOrWhiteSpace($routerModel)) { $routerModel = "qwen2.5:0.5b" }
+        Write-Host "    Router    :  " -NoNewline -ForegroundColor DarkGray
+        Write-Host $routerModel -ForegroundColor Cyan
+    } else {
+        Write-Host "    Backend   :  " -NoNewline -ForegroundColor DarkGray
+        Write-Host "OpenRouter  (cloud)" -ForegroundColor Magenta
+        Write-Host "    Model     :  " -NoNewline -ForegroundColor DarkGray
+        Write-Host $cfg.model -ForegroundColor Magenta
+        $key    = "$($cfg.api_key)"
+        $masked = if ($key.Length -gt 8) {
+            $key.Substring(0,4) + "*****" + $key.Substring($key.Length - 4)
+        } else { "*******" }
+        Write-Host "    API Key   :  $masked" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+}
+
+# ==============================================================
+# ──────────────────────────────────────────────────────────────
+#  PART 1 -- INSTALLER FLOW
+# ──────────────────────────────────────────────────────────────
+# ==============================================================
 
 function Run-Installer {
     Write-Log "=== Installer started ==="
@@ -271,8 +329,175 @@ function Run-Installer {
         return $null
     }
 
-    $guiExe = Join-Path $ScriptDir "bridgegui.exe"
-    $guiPy  = Join-Path $ScriptDir "bridgegui.py"
+    # --- STEP 1A: Git Check & Install & Repo Sync ---
+    Set-Running 1 "Checking for Git..."
+    Draw-InstallScreen
+    
+    $gitCmd = Get-Command "git" -ErrorAction SilentlyContinue
+    $gitOk  = $false
+    
+    if ($gitCmd) {
+        $gitOk = $true
+        Write-Log "Git is already installed: $($gitCmd.Source)"
+    } else {
+        Set-Running 1 "Installing Git via winget..."
+        Draw-InstallScreen
+        
+        $wingetCmd = Get-Command "winget" -ErrorAction SilentlyContinue
+        if ($wingetCmd) {
+            $spin = @("|","/","-","\\"); $i = 0
+            $job  = Start-Job -ScriptBlock {
+                winget install --id Git.Git --silent --accept-package-agreements --accept-source-agreements 2>&1
+            }
+            while ($job.State -eq "Running") {
+                Draw-InstallScreen "$($spin[$i % 4])  Installing Git via winget... (please wait)"
+                $i++; Start-Sleep -Milliseconds 600
+            }
+            $wingetOut = Receive-Job $job -ErrorAction SilentlyContinue
+            Remove-Job $job -Force
+            
+            $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
+                        [System.Environment]::GetEnvironmentVariable("PATH","User")
+            $gitCmd = Get-Command "git" -ErrorAction SilentlyContinue
+            if ($gitCmd) { $gitOk = $true }
+        }
+        
+        if (-not $gitOk) {
+            $gitInst = "$env:TEMP\GitSetup_$PID.exe"
+            $gitUrl  = "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe"
+            
+            Set-Running 1 "Downloading Git setup (~60 MB)..."
+            Draw-InstallScreen
+            Write-Log "Downloading Git from $gitUrl"
+            try {
+                $oldErrorAction = $ErrorActionPreference
+                $ErrorActionPreference = "Stop"
+                $ProgressPreference    = "SilentlyContinue"
+                Invoke-WebRequest -Uri $gitUrl -OutFile $gitInst -UseBasicParsing
+                $ProgressPreference    = "Continue"
+                $ErrorActionPreference = $oldErrorAction
+            } catch {
+                Write-Log "Git download failed: $($_.Exception.Message)"
+            }
+            
+            if (Test-Path $gitInst) {
+                Set-Running 1 "Installing Git silently..."
+                Draw-InstallScreen
+                try {
+                    $proc = Start-Process -FilePath $gitInst -ArgumentList "/VERYSILENT /NORESTART /NOCANCEL /SP-" -PassThru -Wait
+                    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
+                                [System.Environment]::GetEnvironmentVariable("PATH","User")
+                    $gitCmd = Get-Command "git" -ErrorAction SilentlyContinue
+                    if ($gitCmd) { $gitOk = $true }
+                } catch {
+                    Write-Log "Git installer failed: $($_.Exception.Message)"
+                }
+                Remove-Item $gitInst -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # --- Sync code ---
+    $repoUrl = "https://github.com/Denny171/testbannerlordstuff.git"
+    $guiRawUrl = "https://raw.githubusercontent.com/Denny171/testbannerlordstuff/main/bridgegui.py"
+    $hasBackend = Test-Path (Join-Path $ScriptDir "backend.py")
+    $hasGuiPy = Test-Path (Join-Path $ScriptDir "bridgegui.py")
+    $hasGitUpdate = $false
+    
+    try {
+        if ($gitOk) {
+            Set-Running 1 "Syncing code from GitHub using Git..."
+            Draw-InstallScreen
+            
+            # Force Git to run in 100% non-interactive mode.
+            # This completely blocks terminal login prompts and GUI popup windows (Git Credential Manager).
+            $env:GIT_TERMINAL_PROMPT = "0"
+            $env:GCM_INTERACTIVE = "never"
+            
+            $gitRepoPath = Join-Path $ScriptDir ".git"
+            $hashBefore = ""
+            if (Test-Path $gitRepoPath) {
+                $hashBefore = (& git rev-parse HEAD 2>$null)
+                if ($hashBefore) { $hashBefore = $hashBefore.Trim() }
+            }
+
+            if (Test-Path $gitRepoPath) {
+                Write-Log "Git repo exists. Running pull..."
+                & git -c credential.helper= fetch --all 2>&1 | Out-Null
+                & git reset --hard origin/main 2>&1 | Out-Null
+            } else {
+                Write-Log "Cloning codebase..."
+                & git init 2>&1 | Out-Null
+                & git -c credential.helper= remote add origin $repoUrl 2>&1 | Out-Null
+                & git -c credential.helper= fetch --all 2>&1 | Out-Null
+                & git reset --hard origin/main 2>&1 | Out-Null
+            }
+            Write-Log "Git sync complete."
+
+            if ($hashBefore) {
+                $hashAfter = (& git rev-parse HEAD 2>$null)
+                if ($hashAfter) { $hashAfter = $hashAfter.Trim() }
+                if ($hashBefore -ne $hashAfter) {
+                    $hasGitUpdate = $true
+                }
+            }
+        } elseif (-not ($hasBackend -and $hasGuiPy)) {
+            # Fallback to ZIP download if git is missing and core files are incomplete.
+            Set-Running 1 "Downloading codebase via ZIP archive..."
+            Draw-InstallScreen
+            Write-Log "Git missing. Fetching repository ZIP archive..."
+            
+            $zipPath = Join-Path $env:TEMP "testbannerlordstuff_main.zip"
+            $zipUrl  = "https://codeload.github.com/Denny171/testbannerlordstuff/zip/refs/heads/main"
+            
+            $oldErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = "Stop"
+            $ProgressPreference    = "SilentlyContinue"
+            Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+            $ProgressPreference    = "Continue"
+            
+            Expand-Archive -Path $zipPath -DestinationPath $ScriptDir -Force
+            $subDir = Join-Path $ScriptDir "testbannerlordstuff-main"
+            if (Test-Path $subDir) {
+                Copy-Item -Path "$subDir\*" -Destination $ScriptDir -Recurse -Force
+                Remove-Item -Path $subDir -Recurse -Force
+            }
+            Remove-Item $zipPath -Force
+            $ErrorActionPreference = $oldErrorAction
+            Write-Log "ZIP download fallback completed."
+        }
+
+        $guiPyPath = Join-Path $ScriptDir "bridgegui.py"
+        if (-not (Test-Path $guiPyPath)) {
+            Write-Log "bridgegui.py missing after sync. Attempting direct fetch from GitHub raw..."
+            try {
+                Set-Running 1 "Fetching missing GUI file..."
+                Draw-InstallScreen
+                Invoke-WebRequest -Uri $guiRawUrl -OutFile $guiPyPath -UseBasicParsing
+                if (Test-Path $guiPyPath) {
+                    Write-Log "bridgegui.py downloaded successfully from raw URL."
+                } else {
+                    Write-Log "WARNING: bridgegui.py fetch returned without creating file."
+                }
+            } catch {
+                Write-Log "WARNING: Could not fetch bridgegui.py directly: $($_.Exception.Message)"
+            }
+        }
+
+        if ($hasGitUpdate) {
+            Write-Log "New update detected. Restarting launcher after file sync checks..."
+            Write-Host ""
+            Write-Host "  [!] New update pulled from GitHub!" -ForegroundColor Green
+            Write-Host "  [!] Restarting launcher to load new code..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+
+            # Start a new instance of the batch file in a new window
+            Start-Process "$MyInvocation.MyCommand.Path"
+            exit
+        }
+    } catch {
+        Write-Log "Code sync warning: $($_.Exception.Message). Continuing setup..."
+    }
 
     # --- STEP 1B: Python Check & Install ---
     Set-Running 1 "Checking for Python..."
@@ -516,27 +741,35 @@ function Run-Installer {
     $null = Start-Process -FilePath "$ollamaExe" -ArgumentList "serve" -WindowStyle Hidden -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
-    # Let the user choose any Ollama model during install.
+    # Let user choose Ollama model only when config does not already specify one
     $existingCfg = Load-Config
     $defaultRouterModel = "qwen2.5:0.5b"
+    $hasConfiguredRouterModel = $false
     if ($existingCfg -and -not [string]::IsNullOrWhiteSpace("$($existingCfg.router_model)")) {
         $defaultRouterModel = "$($existingCfg.router_model)".Trim()
+        $hasConfiguredRouterModel = $true
     }
-    Clear-Host
-    Draw-Banner
-    Write-Host "  [3/$TOTAL]  Ollama model setup" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  Enter the Ollama model to pull:" -ForegroundColor DarkGray
-    Write-Host "  Press ENTER to use default: $defaultRouterModel" -ForegroundColor DarkGray
-    Write-Host "  You can type any valid Ollama model name here." -ForegroundColor DarkGray
-    Write-Host ""
-    Write-Host "  Model: " -NoNewline -ForegroundColor Cyan
-    $userModelInput = Read-Host
 
-    $selectedRouterModel = if ([string]::IsNullOrWhiteSpace($userModelInput)) {
-        $defaultRouterModel
+    if ($hasConfiguredRouterModel) {
+        $selectedRouterModel = $defaultRouterModel
+        Write-Host "  Using configured Ollama model from config.json: $selectedRouterModel" -ForegroundColor DarkGray
+        Start-Sleep -Milliseconds 700
     } else {
-        $userModelInput.Trim()
+        Clear-Host
+        Draw-Banner
+        Write-Host "  [3/$TOTAL]  Ollama model setup" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  Enter the Ollama model to pull:" -ForegroundColor DarkGray
+        Write-Host "  Press ENTER to use default: $defaultRouterModel" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Model: " -NoNewline -ForegroundColor Cyan
+        $userModelInput = Read-Host
+
+        $selectedRouterModel = if ([string]::IsNullOrWhiteSpace($userModelInput)) {
+            $defaultRouterModel
+        } else {
+            $userModelInput.Trim()
+        }
     }
 
     # Pull model
