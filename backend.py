@@ -53,7 +53,7 @@ free_router_client = OpenAI(
 def _load_config():
     """Reads config.json (written by start.bat) and overrides model settings.
     Falls back to the hardcoded constants above if the file is absent."""
-    global MAIN_MODEL_BASE_URL, MAIN_MODEL_API_KEY, TARGET_MODEL, ROUTER_MODEL, openai_client
+    global MAIN_MODEL_BASE_URL, MAIN_MODEL_API_KEY, TARGET_MODEL, ROUTER_MODEL, DEBUG_MODE, openai_client
     config_path = os.path.join(BASE_DIR, "config.json")
     if not os.path.exists(config_path):
         print("[CONFIG]: config.json not found - using hardcoded defaults.")
@@ -69,11 +69,13 @@ def _load_config():
         MAIN_MODEL_API_KEY  = raw_key
         TARGET_MODEL        = cfg.get("model", "") or "none"
         ROUTER_MODEL        = cfg.get("router_model", ROUTER_MODEL)
+        if "debug_mode" in cfg:
+            DEBUG_MODE = bool(cfg.get("debug_mode"))
         # Re-create the client so it uses the values from config
         openai_client = OpenAI(base_url=MAIN_MODEL_BASE_URL, api_key=MAIN_MODEL_API_KEY)
         print(
             f"[CONFIG]: Loaded config.json - mode={mode}, model='{TARGET_MODEL}', "
-            f"router_model='{ROUTER_MODEL}', url='{MAIN_MODEL_BASE_URL}'"
+            f"router_model='{ROUTER_MODEL}', debug_mode={DEBUG_MODE}, url='{MAIN_MODEL_BASE_URL}'"
         )
     except Exception as cfg_err:
         print(f"[CONFIG WARNING]: Failed to read config.json: {cfg_err}. Using hardcoded defaults.")
