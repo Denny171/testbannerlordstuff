@@ -664,13 +664,6 @@ async def ollama_bridge(request: Request):
         try:
             parsed_json = json.loads(cleaned_output)
             content_str = json.dumps(parsed_json, ensure_ascii=False)
-            
-            # Extract internal thoughts and display them in logs only (no file persistence)
-            thoughts = parsed_json.get("internal_thoughts", "")
-            if not thoughts:
-                thoughts = parsed_json.get("thoughts", "") or parsed_json.get("thought", "")
-            if thoughts:
-                print(f"[THOUGHTS]: {thoughts}")
         except Exception as json_err:
             print(f"[BRIDGE WARNING]: Model did not return valid JSON! Error: {json_err}. Passing raw text.")
             content_str = raw_ai_output.strip()
@@ -1512,13 +1505,6 @@ async def ollama_bridge(request: Request):
         try:
             parsed_json = json.loads(cleaned_output)
             content_str = json.dumps(parsed_json, ensure_ascii=False)
-            
-            # Extract internal thoughts and display them in logs only (no file persistence)
-            thoughts = parsed_json.get("internal_thoughts", "")
-            if not thoughts:
-                thoughts = parsed_json.get("thoughts", "") or parsed_json.get("thought", "")
-            if thoughts:
-                print(f"[THOUGHTS]: {thoughts}")
         except Exception as json_err:
             print(f"[BRIDGE WARNING]: Model did not return valid JSON! Error: {json_err}. Passing raw text.")
             content_str = raw_ai_output.strip()
