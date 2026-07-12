@@ -732,7 +732,7 @@ def find_ollama_executable() -> str:
 def kill_ollama():
     import subprocess
     import time
-    print("[SYSTEM]: Port 11434 is in use. Attempting to kill existing Ollama process to free the port...")
+    print("[SYSTEM]: Port 11435 is in use. Attempting to kill existing Ollama process to free the port...")
     try:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/f", "/im", "ollama.exe"], capture_output=True)
@@ -742,11 +742,11 @@ def kill_ollama():
             subprocess.run(["pkill", "-f", "ollama"], capture_output=True)
 
         for _ in range(10):
-            if not is_port_in_use(11434):
-                print("[SYSTEM]: Port 11434 successfully freed.")
+            if not is_port_in_use(11435):
+                print("[SYSTEM]: Port 11435 successfully freed.")
                 return
             time.sleep(0.5)
-        print("[SYSTEM WARNING]: Port 11434 is still in use after attempting to kill Ollama.")
+        print("[SYSTEM WARNING]: Port 11435 is still in use after attempting to kill Ollama.")
     except Exception as e:
         print(f"[SYSTEM WARNING]: Error while trying to kill Ollama: {e}")
 
@@ -842,7 +842,7 @@ if __name__ == "__main__":
         except Exception as qe_err:
             print(f"[SYSTEM WARNING]: Could not disable QuickEdit Mode: {qe_err}")
 
-    if is_port_in_use(11434):
+    if is_port_in_use(11435):
         kill_ollama()
     start_ollama()
 
