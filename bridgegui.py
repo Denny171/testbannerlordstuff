@@ -9,7 +9,6 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-
 APP_TITLE = "Token Saving Bridge for AI Influence"
 if getattr(sys, "frozen", False):
     APP_DIR = Path(sys.executable).resolve().parent
@@ -41,6 +40,10 @@ DEFAULT_TOKENS = {
     "total_prompt_tokens": 0,
     "total_completion_tokens": 0,
     "session_prompt_tokens": 0,
+    "session_completion_tokens": 0,
+}
+
+THEME = {
     "bg": "#0b0e15",
     "panel": "#10141e",
     "card": "#161b28",
