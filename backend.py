@@ -633,7 +633,8 @@ async def ollama_bridge(request: Request):
             except Exception as debug_err:
                 print(f"[DEBUG ERROR]: Failed to save packet preview: {debug_err}")
 
-        print(f"[BRIDGE]: Sent to model {TARGET_MODEL}. Size: {len(str(openai_messages))} chars.")
+        packet_chars = sum(len(m.get("content", "")) for m in openai_messages)
+        print(f"[BRIDGE]: Sent to model {TARGET_MODEL}. Size: {packet_chars} chars.")
 
         # CALL MAIN LARGE MODEL ASYNCHRONOUSLY
         response = await asyncio.to_thread(
@@ -822,7 +823,6 @@ def start_ollama():
 
 
 if __name__ == "__main__":
-    import subprocess
     import uvicorn
 
     if sys.platform == "win32":
