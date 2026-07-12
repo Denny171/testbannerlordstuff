@@ -346,7 +346,7 @@ function Run-Installer {
     }
 
     # --- Sync code ---
-    $repoUrl = "https://github.com/DKDI132/aiinfluence_bridge.git"
+    $repoUrl = "https://github.com/Denny171/testbannerlordstuff.git"
     $hasBackend = Test-Path (Join-Path $ScriptDir "backend.py")
     
     try {
