@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -251,6 +252,7 @@ class BridgeApp(tk.Tk):
         self._stdout_read_pos = 0
         self._stderr_read_pos = 0
         self._seen_intercept_files = set()
+        self._backend_action_in_progress = False
 
         self._ensure_files()
         self._initialize_log_tail_positions()
@@ -548,7 +550,7 @@ class BridgeApp(tk.Tk):
         self.mode_info_var.set(mode)
         self._append_log("Configuration loaded.")
 
-    def _save_config(self):
+    def _save_config(self, show_message=True):
         mode = self.mode_var.get().strip() or "player2"
         cfg = {
             "mode": mode,
@@ -563,7 +565,8 @@ class BridgeApp(tk.Tk):
         self._save_json(CONFIG_PATH, cfg)
         self.mode_info_var.set(mode)
         self._append_log(f"Saved config.json (mode={mode}).")
-        messagebox.showinfo(APP_TITLE, "Configuration saved.")
+        if show_message:
+            messagebox.showinfo(APP_TITLE, "Configuration saved.")
 
     def _on_mode_changed(self):
         mode = self.mode_var.get().strip()
@@ -577,10 +580,26 @@ class BridgeApp(tk.Tk):
     def _append_log(self, text):
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {text}\n"
-        self.log_text.configure(state=tk.NORMAL)
-        self.log_text.insert(tk.END, line)
-        self.log_text.see(tk.END)
-        self.log_text.configure(state=tk.DISABLED)
+        try:
+            self.log_text.configure(state=tk.NORMAL)
+            self.log_text.insert(tk.END, line)
+            self.log_text.see(tk.END)
+            self.log_text.configure(state=tk.DISABLED)
+        except tk.TclError:
+            # Widget may be torn down during close; ignore late log updates.
+            pass
+
+    def _run_on_ui(self, callback):
+        try:
+            self.after(0, callback)
+        except tk.TclError:
+            pass
+
+    def _append_log_async(self, text):
+        self._run_on_ui(lambda: self._append_log(text))
+
+    def _set_backend_action_in_progress(self, in_progress: bool):
+        self._backend_action_in_progress = in_progress
 
     def _to_float(self, value, default=0.0):
         try:
@@ -624,6 +643,14 @@ class BridgeApp(tk.Tk):
     # Backend process management
     # ------------------------------------------------------------------
     def _start_backend(self):
+        if self._backend_action_in_progress:
+            self._append_log("Backend action already in progress. Please wait...")
+            return
+
+        if self.backend_proc and self.backend_proc.poll() is not None:
+            self.backend_proc = None
+            self._close_backend_handles()
+
         if self.backend_proc and self.backend_proc.poll() is None:
             messagebox.showinfo(APP_TITLE, "Backend is already running.")
             return
@@ -640,44 +667,74 @@ class BridgeApp(tk.Tk):
             py = sys.executable or "python"
             backend_cmd = [py, str(BACKEND_SCRIPT_PATH)]
 
-        self._save_config()
+        self._save_config(show_message=False)
+        router_model = self.router_model_var.get().strip() or DEFAULT_CONFIG["router_model"]
 
-        preflight_error = self._run_start_preflight_checks()
-        if preflight_error:
-            self._append_log(f"Preflight failed: {preflight_error}")
-            messagebox.showerror(APP_TITLE, preflight_error)
-            return
+        self._set_backend_action_in_progress(True)
+        self._append_log("Starting backend...")
+        worker = threading.Thread(
+            target=self._start_backend_worker,
+            args=(backend_cmd, router_model),
+            daemon=True,
+        )
+        worker.start()
 
+    def _start_backend_worker(self, backend_cmd, router_model):
+        stdout_handle = None
+        stderr_handle = None
         try:
-            if STDOUT_PATH.exists():
-                STDOUT_PATH.unlink()
-            if STDERR_PATH.exists():
-                STDERR_PATH.unlink()
-        except Exception:
-            pass
+            try:
+                # Do not preflight Ollama from GUI thread/worker.
+                # backend.py already owns Ollama startup/recovery and provides clearer runtime logs.
+                self._close_backend_handles()
 
-        try:
-            self.backend_stdout_handle = open(STDOUT_PATH, "w", encoding="utf-8")
-            self.backend_stderr_handle = open(STDERR_PATH, "w", encoding="utf-8")
+                if STDOUT_PATH.exists():
+                    STDOUT_PATH.unlink()
+                if STDERR_PATH.exists():
+                    STDERR_PATH.unlink()
+            except Exception:
+                pass
+
+            stdout_handle = open(STDOUT_PATH, "w", encoding="utf-8")
+            stderr_handle = open(STDERR_PATH, "w", encoding="utf-8")
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
-            self.backend_proc = subprocess.Popen(
+            proc = subprocess.Popen(
                 backend_cmd,
                 cwd=str(APP_DIR),
-                stdout=self.backend_stdout_handle,
-                stderr=self.backend_stderr_handle,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
                 env=env,
             )
-            self._stdout_read_pos = 0
-            self._stderr_read_pos = 0
-            self.status_var.set("ACTIVE")
-            self._set_status_badge(True)
-            self._append_log(f"Backend started (PID {self.backend_proc.pid}).")
-        except Exception as exc:
-            self._append_log(f"Failed to start backend: {exc}")
-            messagebox.showerror(APP_TITLE, f"Failed to start backend: {exc}")
 
-    def _run_start_preflight_checks(self):
+            def _on_started():
+                self.backend_stdout_handle = stdout_handle
+                self.backend_stderr_handle = stderr_handle
+                self.backend_proc = proc
+                self._stdout_read_pos = 0
+                self._stderr_read_pos = 0
+                self.status_var.set("ACTIVE")
+                self._set_status_badge(True)
+                self._append_log(f"Backend started (PID {self.backend_proc.pid}).")
+
+            self._run_on_ui(_on_started)
+        except Exception as exc:
+            try:
+                if stdout_handle:
+                    stdout_handle.close()
+            except Exception:
+                pass
+            try:
+                if stderr_handle:
+                    stderr_handle.close()
+            except Exception:
+                pass
+            self._append_log_async(f"Failed to start backend: {exc}")
+            self._run_on_ui(lambda: messagebox.showerror(APP_TITLE, f"Failed to start backend: {exc}"))
+        finally:
+            self._run_on_ui(lambda: self._set_backend_action_in_progress(False))
+
+    def _run_start_preflight_checks(self, router_model):
         if not getattr(sys, "frozen", False):
             missing_modules = []
             for module_name in ("fastapi", "openai", "uvicorn"):
@@ -686,30 +743,16 @@ class BridgeApp(tk.Tk):
                 except Exception:
                     missing_modules.append(module_name)
             if missing_modules:
-                self._append_log(
-                    "Missing Python packages detected: " + ", ".join(missing_modules) + ". Trying auto-install..."
+                missing_str = ", ".join(missing_modules)
+                return (
+                    f"Missing Python packages: {missing_str}. "
+                    f"Install with: {sys.executable} -m pip install {missing_str}"
                 )
-                try:
-                    install_result = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", *missing_modules],
-                        capture_output=True,
-                        text=True,
-                        timeout=300,
-                    )
-                except Exception as exc:
-                    return f"Failed to auto-install Python packages: {exc}"
-
-                if install_result.returncode != 0:
-                    detail = (install_result.stderr or install_result.stdout or "unknown error").strip()
-                    return f"Auto-install failed for Python packages: {detail}"
-
-                self._append_log("Missing Python packages were auto-installed.")
 
         ollama_path = shutil.which("ollama")
         if not ollama_path:
             return "Ollama is not installed or not on PATH."
 
-        router_model = self.router_model_var.get().strip() or DEFAULT_CONFIG["router_model"]
         try:
             result = subprocess.run(
                 [ollama_path, "list"],
@@ -734,44 +777,52 @@ class BridgeApp(tk.Tk):
                 model_names.add(model_name[: -len(":latest")])
 
         if router_model.lower() not in model_names:
-            self._append_log(f"Router model '{router_model}' is missing. Trying auto-pull...")
-            try:
-                pull_result = subprocess.run(
-                    [ollama_path, "pull", router_model],
-                    capture_output=True,
-                    text=True,
-                    timeout=1800,
-                )
-            except Exception as exc:
-                return f"Failed to auto-pull router model '{router_model}': {exc}"
-
-            if pull_result.returncode != 0:
-                detail = (pull_result.stderr or pull_result.stdout or "unknown error").strip()
-                return f"Auto-pull failed for router model '{router_model}': {detail}"
-
-            self._append_log(f"Router model '{router_model}' was auto-pulled.")
+            return (
+                f"Router model '{router_model}' is not pulled in Ollama. "
+                f"Run: ollama pull {router_model}"
+            )
 
         return None
 
     def _stop_backend(self):
+        if self._backend_action_in_progress:
+            self._append_log("Backend action already in progress. Please wait...")
+            return
+
         if not self.backend_proc or self.backend_proc.poll() is not None:
+            self.backend_proc = None
+            self._close_backend_handles()
             self.status_var.set("INACTIVE")
             self._set_status_badge(False)
             return
+
+        proc = self.backend_proc
+        self._set_backend_action_in_progress(True)
+        self._append_log("Stopping backend...")
+        worker = threading.Thread(target=self._stop_backend_worker, args=(proc,), daemon=True)
+        worker.start()
+
+    def _stop_backend_worker(self, proc):
+        stop_msg = "Backend stopped."
         try:
-            self.backend_proc.terminate()
-            self.backend_proc.wait(timeout=3)
-            self._append_log("Backend stopped.")
+            proc.terminate()
+            proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
-            self.backend_proc.kill()
-            self._append_log("Backend force-killed.")
+            proc.kill()
+            stop_msg = "Backend force-killed."
         except Exception as exc:
-            self._append_log(f"Failed to stop backend cleanly: {exc}")
+            stop_msg = f"Failed to stop backend cleanly: {exc}"
         finally:
-            self.backend_proc = None
-            self.status_var.set("INACTIVE")
-            self._set_status_badge(False)
-            self._close_backend_handles()
+            def _on_stopped():
+                if self.backend_proc is proc:
+                    self.backend_proc = None
+                self.status_var.set("INACTIVE")
+                self._set_status_badge(False)
+                self._close_backend_handles()
+                self._append_log(stop_msg)
+                self._set_backend_action_in_progress(False)
+
+            self._run_on_ui(_on_stopped)
 
     def _set_status_badge(self, is_active: bool):
         if is_active:
@@ -850,21 +901,25 @@ class BridgeApp(tk.Tk):
         self._stderr_read_pos = self._tail_log_file(STDERR_PATH, self._stderr_read_pos)
 
     def _periodic_refresh(self):
-        if self.backend_proc and self.backend_proc.poll() is not None:
-            self._append_log(f"Backend exited (code {self.backend_proc.returncode}).")
-            self.backend_proc = None
-            self._close_backend_handles()
-            self._set_status_badge(False)
+        try:
+            if self.backend_proc and self.backend_proc.poll() is not None:
+                self._append_log(f"Backend exited (code {self.backend_proc.returncode}).")
+                self.backend_proc = None
+                self._close_backend_handles()
+                self._set_status_badge(False)
 
-        if self.backend_proc and self.backend_proc.poll() is None:
-            self._set_status_badge(True)
-        else:
-            self._set_status_badge(False)
+            if self.backend_proc and self.backend_proc.poll() is None:
+                self._set_status_badge(True)
+            else:
+                self._set_status_badge(False)
 
-        self._poll_backend_logs()
-        self._refresh_status_labels()
-        self._poll_intercepts()
-        self.after(1000, self._periodic_refresh)
+            self._poll_backend_logs()
+            self._refresh_status_labels()
+            self._poll_intercepts()
+        except Exception as exc:
+            self._append_log(f"UI refresh warning: {exc}")
+        finally:
+            self.after(1000, self._periodic_refresh)
 
     def _on_close(self):
         self._stop_backend()
