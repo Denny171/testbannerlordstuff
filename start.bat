@@ -138,6 +138,139 @@ function Start-GUI {
 }
 
 function Run-Installer {
+    Write-Log "=== Installer started ==="
+    $Steps = [System.Collections.Generic.List[hashtable]]::new()
+
+    function Add-Step($idx, $label) {
+        $Steps.Add(@{ Idx=$idx; Label=$label; State="pending"; Detail="" })
+    }
+    function Set-Running($idx, $d) {
+        for ($i = 0; $i -lt $Steps.Count; $i++) {
+            if ($Steps[$i]["Idx"] -eq $idx) {
+                $Steps[$i]["State"]  = "running"
+                $Steps[$i]["Detail"] = $d
+                break
+            }
+        }
+    }
+    function Set-Done($idx, $d) {
+        for ($i = 0; $i -lt $Steps.Count; $i++) {
+            if ($Steps[$i]["Idx"] -eq $idx) {
+                $Steps[$i]["State"]  = "done"
+                $Steps[$i]["Detail"] = $d
+                break
+            }
+        }
+    }
+    function Set-Err($idx, $d) {
+        for ($i = 0; $i -lt $Steps.Count; $i++) {
+            if ($Steps[$i]["Idx"] -eq $idx) {
+                $Steps[$i]["State"]  = "error"
+                $Steps[$i]["Detail"] = $d
+                break
+            }
+        }
+    }
+
+    Add-Step 1 "Bridge Code & Python"
+    Add-Step 2 "Python dependencies"
+    Add-Step 3 "Ollama  (local AI router)"
+    Add-Step 4 "Configuration"
+
+    function Draw-InstallScreen($sub = "") {
+        Clear-Host
+        Draw-Banner
+        foreach ($s in $Steps) {
+            $label  = "  [{0}/{1}]  {2}" -f $s.Idx, $TOTAL, $s.Label
+            $padded = $label.PadRight(46)
+            switch ($s.State) {
+                "done"    { Write-Host $padded -NoNewline -ForegroundColor White
+                            Write-Host "OK   $($s.Detail)" -ForegroundColor Green }
+                "error"   { Write-Host $padded -NoNewline -ForegroundColor White
+                            Write-Host "ERR  $($s.Detail)" -ForegroundColor Red }
+                "running" { Write-Host $padded -NoNewline -ForegroundColor Yellow
+                            Write-Host "...  $($s.Detail)" -ForegroundColor Yellow }
+                default   { Write-Host $padded -ForegroundColor DarkGray }
+            }
+        }
+        if ($sub -ne "") {
+            Write-Host ""
+            Write-Host "      $sub" -ForegroundColor DarkGray
+        }
+        Write-Host ""
+    }
+
+    function Show-InstallError($Code, $Title, $Detail = "", $Hint = "") {
+        Write-Host ""
+        Write-Host "  +---------------------------------------------------------------+" -ForegroundColor Red
+        Write-Host "  |  INSTALLATION ERROR                                           |" -ForegroundColor Red
+        Write-Host "  +---------------------------------------------------------------+" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Error code  :  " -NoNewline -ForegroundColor DarkGray
+        Write-Host $Code -ForegroundColor Red
+        Write-Host "  Description :  $Title" -ForegroundColor White
+        Write-Host ""
+        if ($Detail -ne "") {
+            Write-Host "  Details:" -ForegroundColor DarkGray
+            $words = $Detail -split " "
+            $line  = "    "
+            foreach ($w in $words) {
+                if (($line + $w).Length -gt 68) {
+                    Write-Host $line -ForegroundColor DarkGray
+                    $line = "    $w "
+                } else { $line += "$w " }
+            }
+            if ($line.Trim() -ne "") { Write-Host $line -ForegroundColor DarkGray }
+            Write-Host ""
+        }
+        if ($Hint -ne "") {
+            Write-Host "  How to fix  :  $Hint" -ForegroundColor Yellow
+            Write-Host ""
+        }
+        Write-Host "  Full log saved to: install_log.txt" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  -----------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  DKDI132  |  https://github.com/DKDI132/aiinfluence_bridge" -ForegroundColor DarkGray
+        Write-Host "  Discord  |  dkdi2 (if any problems)" -ForegroundColor DarkGray
+        Write-Host ""
+    }
+
+    # --- Find Python Helper ---
+    function Find-Python {
+        $cmdPy    = Get-Command "python" -ErrorAction SilentlyContinue
+        $fromPath = if ($cmdPy) { $cmdPy.Source } else { $null }
+        if ($fromPath -and (Test-Path $fromPath)) {
+            try {
+                $v = & "$fromPath" --version 2>&1
+                if ($v -match "Python \d") { return $fromPath }
+            } catch {}
+        }
+        $cmdLaunch  = Get-Command "py" -ErrorAction SilentlyContinue
+        $pyLauncher = if ($cmdLaunch) { $cmdLaunch.Source } else { $null }
+        if ($pyLauncher) {
+            try {
+                $loc = & py -c "import sys; print(sys.executable)" 2>&1
+                if ($loc -and (Test-Path "$loc")) { return "$loc".Trim() }
+            } catch {}
+        }
+        $candidates = @()
+        foreach ($ver in @("313","312","311","310","39")) {
+            $candidates += "$env:LOCALAPPDATA\Programs\Python\Python$ver\python.exe"
+            $candidates += "$env:ProgramFiles\Python$ver\python.exe"
+            $candidates += "${env:ProgramFiles(x86)}\Python$ver\python.exe"
+        }
+        $candidates += "$env:USERPROFILE\scoop\apps\python\current\python.exe"
+        foreach ($p in $candidates) {
+            if (Test-Path $p) {
+                try {
+                    $v = & "$p" --version 2>&1
+                    if ($v -match "Python \d") { return $p }
+                } catch {}
+            }
+        }
+        return $null
+    }
+
     $guiExe = Join-Path $ScriptDir "bridgegui.exe"
     $guiPy  = Join-Path $ScriptDir "bridgegui.py"
 
