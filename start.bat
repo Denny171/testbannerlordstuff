@@ -108,6 +108,39 @@ function Start-GUI {
     $guiExe = Join-Path $ScriptDir "bridgegui.exe"
     $guiPy  = Join-Path $ScriptDir "bridgegui.py"
 
+    if (Test-Path $guiExe) {
+        try {
+            $exeProc = Start-Process -FilePath $guiExe -WorkingDirectory $ScriptDir -PassThru -ErrorAction Stop
+            Start-Sleep -Milliseconds 1200
+            $exeProc.Refresh()
+            if (-not $exeProc.HasExited) {
+                return $true
+            }
+            Write-Host "  bridgegui.exe exited immediately (code $($exeProc.ExitCode)). Falling back to Python GUI..." -ForegroundColor Yellow
+        } catch {
+            Write-Host "  Failed to launch bridgegui.exe: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    if (Test-Path $guiPy) {
+        try {
+            $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
+            $pyExe = if ($pyCmd -and (Test-Path $pyCmd.Source)) { $pyCmd.Source } else { "python" }
+            Start-Process -FilePath $pyExe -ArgumentList "`"$guiPy`"" -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+            return $true
+        } catch {
+            Write-Host "  Failed to launch bridgegui.py: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    Write-Host "  GUI file not found (bridgegui.exe or bridgegui.py)." -ForegroundColor Yellow
+    return $false
+}
+
+function Run-Installer {
+    $guiExe = Join-Path $ScriptDir "bridgegui.exe"
+    $guiPy  = Join-Path $ScriptDir "bridgegui.py"
+
     # --- STEP 1B: Python Check & Install ---
     Set-Running 1 "Checking for Python..."
     Draw-InstallScreen
