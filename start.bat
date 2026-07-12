@@ -122,7 +122,10 @@ function Draw-ConfigBlock($cfg) {
         Write-Host "    Backend   :  " -NoNewline -ForegroundColor DarkGray
         Write-Host "Player 2  (local)" -ForegroundColor Cyan
         Write-Host "    Endpoint  :  http://127.0.0.1:4315" -ForegroundColor DarkGray
-        Write-Host "    Model     :  (managed by Player 2 app)" -ForegroundColor DarkGray
+        $routerModel = "$($cfg.router_model)"
+        if ([string]::IsNullOrWhiteSpace($routerModel)) { $routerModel = "qwen2.5:0.5b" }
+        Write-Host "    Router    :  " -NoNewline -ForegroundColor DarkGray
+        Write-Host $routerModel -ForegroundColor Cyan
     } else {
         Write-Host "    Backend   :  " -NoNewline -ForegroundColor DarkGray
         Write-Host "OpenRouter  (cloud)" -ForegroundColor Magenta
@@ -689,16 +692,50 @@ function Run-Installer {
     $null = Start-Process -FilePath "$ollamaExe" -ArgumentList "serve" -WindowStyle Hidden -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
+    # Let user choose Ollama model to pull
+    $existingCfg = Load-Config
+    $defaultRouterModel = "qwen2.5:0.5b"
+    if ($existingCfg -and -not [string]::IsNullOrWhiteSpace("$($existingCfg.router_model)")) {
+        $defaultRouterModel = "$($existingCfg.router_model)".Trim()
+    }
+
+    Clear-Host
+    Draw-Banner
+    Write-Host "  [3/$TOTAL]  Ollama model setup" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Enter the Ollama model to pull (example: qwen2.5:7b-instruct)" -ForegroundColor DarkGray
+    Write-Host "  Press ENTER to use default: $defaultRouterModel" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Model: " -NoNewline -ForegroundColor Cyan
+    $userModelInput = Read-Host
+
+    $selectedRouterModel = if ([string]::IsNullOrWhiteSpace($userModelInput)) {
+        $defaultRouterModel
+    } else {
+        $userModelInput.Trim()
+    }
+
     # Pull model
-    Set-Running 3 "Pulling qwen2.5:0.5b (may take a few minutes)..."
+    Set-Running 3 "Pulling $selectedRouterModel (may take a few minutes)..."
     Draw-InstallScreen
 
-    & "$ollamaExe" pull qwen2.5:0.5b 2>&1 | ForEach-Object {
+    & "$ollamaExe" pull $selectedRouterModel 2>&1 | ForEach-Object {
         $line  = "$_"
         $short = if ($line.Length -gt 60) { $line.Substring(0,60) + "..." } else { $line }
         Draw-InstallScreen $short
     }
-    Set-Done 3 "qwen2.5:0.5b ready"
+    if ($LASTEXITCODE -ne 0) {
+        Set-Err 3 "[E-OL-PULL] Model pull failed"
+        Draw-InstallScreen
+        Show-InstallError -Code "E-OL-PULL" `
+            -Title "Ollama model pull failed" `
+            -Detail "Model: $selectedRouterModel" `
+            -Hint "Check model name and internet access, then rerun installer."
+        Read-Host "  Press ENTER to exit"
+        exit 1
+    }
+
+    Set-Done 3 "$selectedRouterModel ready"
     Draw-InstallScreen
 
     # --- STEP 4: Configuration Prompt ---
@@ -740,6 +777,7 @@ function Run-Installer {
             base_url = "https://openrouter.ai/api/v1"
             api_key  = $orKey.Trim()
             model    = $orModel.Trim()
+            router_model = $selectedRouterModel
         }
     } else {
         $cfg = [ordered]@{
@@ -747,6 +785,7 @@ function Run-Installer {
             base_url = "http://127.0.0.1:4315/v1"
             api_key  = ""
             model    = ""
+            router_model = $selectedRouterModel
         }
     }
 
