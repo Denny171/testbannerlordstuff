@@ -311,12 +311,10 @@ class BridgeApp(tk.Tk):
         title_row.pack(fill=tk.X, anchor="w")
         ttk.Label(title_row, text="Token Saving Bridge for AI Influence", style="Title.TLabel").pack(side=tk.LEFT, anchor="w")
 
-        self.header_badge = RoundedBadge(title_row, "INACTIVE", THEME["bad"], parent_bg=THEME["bg"], width=110, height=28)
-        self.header_badge.pack(side=tk.RIGHT, anchor="e", pady=(4, 0))
 
         ttk.Label(
             header,
-            text="Dashboard for configuration, management, and logging",
+            text="",
             style="SubTitle.TLabel",
         ).pack(anchor="w", pady=(4, 14))
 
@@ -487,7 +485,7 @@ class BridgeApp(tk.Tk):
             font=LOG_FONT,
         )
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        self.log_text.insert(tk.END, "Ready. Start Backend when you are set.\n")
+        self.log_text.insert(tk.END, "Dashboard ready. Start Backend when you are ready.\n")
         self.log_text.configure(state=tk.DISABLED)
 
     def _build_status_panel(self, parent):
@@ -787,11 +785,9 @@ class BridgeApp(tk.Tk):
         if is_active:
             self.status_var.set("ACTIVE")
             self.status_badge.set("ACTIVE", THEME["ok"])
-            self.header_badge.set("ACTIVE", THEME["ok"])
         else:
             self.status_var.set("INACTIVE")
             self.status_badge.set("INACTIVE", THEME["bad"])
-            self.header_badge.set("INACTIVE", THEME["bad"])
 
     def _close_backend_handles(self):
         for handle in (self.backend_stdout_handle, self.backend_stderr_handle):
@@ -1213,12 +1209,9 @@ class BridgeApp(tk.Tk):
         title_row.pack(fill=tk.X, anchor="w")
         ttk.Label(title_row, text="Token Saving Bridge for AI Influence", style="Title.TLabel").pack(side=tk.LEFT, anchor="w")
 
-        self.header_badge = RoundedBadge(title_row, "INACTIVE", THEME["bad"], parent_bg=THEME["bg"], width=110, height=28)
-        self.header_badge.pack(side=tk.RIGHT, anchor="e", pady=(4, 0))
-
         ttk.Label(
             header,
-            text="Dashboard for configuration, management, and logging",
+            text="",
             style="SubTitle.TLabel",
         ).pack(anchor="w", pady=(4, 14))
 
@@ -1739,11 +1732,9 @@ class BridgeApp(tk.Tk):
         if is_active:
             self.status_var.set("ACTIVE")
             self.status_badge.set("ACTIVE", THEME["ok"])
-            self.header_badge.set("ACTIVE", THEME["ok"])
         else:
             self.status_var.set("INACTIVE")
             self.status_badge.set("INACTIVE", THEME["bad"])
-            self.header_badge.set("INACTIVE", THEME["bad"])
 
     def _close_backend_handles(self):
         for handle in (self.backend_stdout_handle, self.backend_stderr_handle):
