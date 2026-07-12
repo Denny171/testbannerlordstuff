@@ -346,10 +346,8 @@ function Run-Installer {
     }
 
     # --- Sync code ---
-    $repoUrl = "https://github.com/DKDI132/aiinfluence_bridge.git"
-    $guiRawUrl = "https://raw.githubusercontent.com/DKDI132/aiinfluence_bridge/main/bridgegui.py"
+    $repoUrl = "https://github.com/Denny171/testbannerlordstuff.git"
     $hasBackend = Test-Path (Join-Path $ScriptDir "backend.py")
-    $hasGuiPy = Test-Path (Join-Path $ScriptDir "bridgegui.py")
     
     try {
         if ($gitOk) {
@@ -396,8 +394,8 @@ function Run-Installer {
                     exit
                 }
             }
-        } elseif (-not ($hasBackend -and $hasGuiPy)) {
-            # Fallback to ZIP download if git is missing and core files are incomplete.
+        } elseif (-not $hasBackend) {
+            # Fallback to ZIP download only if git is missing and we don't have backend.py
             Set-Running 1 "Downloading codebase via ZIP archive..."
             Draw-InstallScreen
             Write-Log "Git missing. Fetching repository ZIP archive..."
@@ -420,19 +418,6 @@ function Run-Installer {
             Remove-Item $zipPath -Force
             $ErrorActionPreference = $oldErrorAction
             Write-Log "ZIP download fallback completed."
-        }
-
-        $guiPyPath = Join-Path $ScriptDir "bridgegui.py"
-        if (-not (Test-Path $guiPyPath)) {
-            Write-Log "bridgegui.py missing after sync. Attempting direct fetch from GitHub raw..."
-            try {
-                Set-Running 1 "Fetching missing GUI file..."
-                Draw-InstallScreen
-                Invoke-WebRequest -Uri $guiRawUrl -OutFile $guiPyPath -UseBasicParsing
-                Write-Log "bridgegui.py downloaded successfully from raw URL."
-            } catch {
-                Write-Log "WARNING: Could not fetch bridgegui.py directly: $($_.Exception.Message)"
-            }
         }
     } catch {
         Write-Log "Code sync warning: $($_.Exception.Message). Continuing setup..."
@@ -805,7 +790,7 @@ function Run-Launcher {
         Write-Host "    [2]  Change API key only" -ForegroundColor White
         Write-Host "    [3]  Change both (model + API key)" -ForegroundColor White
         Write-Host "    [4]  Switch backend  (Player 2  <->  OpenRouter)" -ForegroundColor White
-        Write-Host "    [5]  No changes -- start now" -ForegroundColor Green
+        Write-Host "    [5]  No changes -- start GUI now" -ForegroundColor Green
         Write-Host "    [6]  Run Installer / Update from GitHub" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  Your choice: " -NoNewline -ForegroundColor White
@@ -866,6 +851,36 @@ function Run-Launcher {
                 $cfg.api_key  = ""
             }
             Save-Config $cfg
+        }
+        "5" {
+            $guiExe = Join-Path $ScriptDir "bridgegui.exe"
+            $guiPy  = Join-Path $ScriptDir "bridgegui.py"
+
+            if (Test-Path $guiExe) {
+                try {
+                    Start-Process -FilePath $guiExe -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+                    return
+                } catch {
+                    Write-Host "  Failed to launch bridgegui.exe: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+
+            if (Test-Path $guiPy) {
+                $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
+                $pyExe = if ($pyCmd -and (Test-Path $pyCmd.Source)) { $pyCmd.Source } else { "python" }
+                try {
+                    Start-Process -FilePath $pyExe -ArgumentList "`"$guiPy`"" -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+                    return
+                } catch {
+                    Write-Host "  Failed to launch bridgegui.py: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "  Falling back to console launcher..." -ForegroundColor Yellow
+                    Start-Sleep -Milliseconds 900
+                }
+            } else {
+                Write-Host "  GUI file not found (bridgegui.exe or bridgegui.py)." -ForegroundColor Yellow
+                Write-Host "  Falling back to console launcher..." -ForegroundColor Yellow
+                Start-Sleep -Milliseconds 900
+            }
         }
         "6" {
             # Run installer manually (will trigger Github sync/re-installation)
