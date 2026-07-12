@@ -53,7 +53,7 @@ free_router_client = OpenAI(
 def _load_config():
     """Reads config.json (written by start.bat) and overrides model settings.
     Falls back to the hardcoded constants above if the file is absent."""
-    global MAIN_MODEL_BASE_URL, MAIN_MODEL_API_KEY, TARGET_MODEL, openai_client
+    global MAIN_MODEL_BASE_URL, MAIN_MODEL_API_KEY, TARGET_MODEL, ROUTER_MODEL, openai_client
     config_path = os.path.join(BASE_DIR, "config.json")
     if not os.path.exists(config_path):
         print("[CONFIG]: config.json not found - using hardcoded defaults.")
@@ -68,17 +68,21 @@ def _load_config():
         raw_key = cfg.get("api_key", "") or "none"
         MAIN_MODEL_API_KEY  = raw_key
         TARGET_MODEL        = cfg.get("model", "") or "none"
+        ROUTER_MODEL        = cfg.get("router_model", ROUTER_MODEL)
         # Re-create the client so it uses the values from config
         openai_client = OpenAI(base_url=MAIN_MODEL_BASE_URL, api_key=MAIN_MODEL_API_KEY)
-        print(f"[CONFIG]: Loaded config.json - mode={mode}, model='{TARGET_MODEL}', url='{MAIN_MODEL_BASE_URL}'")
+        print(
+            f"[CONFIG]: Loaded config.json - mode={mode}, model='{TARGET_MODEL}', "
+            f"router_model='{ROUTER_MODEL}', url='{MAIN_MODEL_BASE_URL}'"
+        )
     except Exception as cfg_err:
         print(f"[CONFIG WARNING]: Failed to read config.json: {cfg_err}. Using hardcoded defaults.")
 
 
-def _update_tokens(token_count: int):
-    """Adds token_count to both total_tokens and session_tokens in tokens.json.
-    Called after every successful call to the main model."""
-    if token_count <= 0:
+def _update_tokens(total_tokens: int, prompt_tokens: int = 0, completion_tokens: int = 0):
+    """Updates aggregate and session token counters in tokens.json.
+    Tracks total tokens plus prompt/completion split when available."""
+    if total_tokens <= 0 and prompt_tokens <= 0 and completion_tokens <= 0:
         return
     tokens_path = os.path.join(BASE_DIR, "tokens.json")
     try:
@@ -87,9 +91,22 @@ def _update_tokens(token_count: int):
             with open(tokens_path, "r", encoding="utf-8-sig") as f:
                 tok = json.load(f)
         else:
-            tok = {"total_tokens": 0, "session_tokens": 0}
-        tok["total_tokens"]   = tok.get("total_tokens",   0) + token_count
-        tok["session_tokens"] = tok.get("session_tokens", 0) + token_count
+            tok = {
+                "total_tokens": 0,
+                "session_tokens": 0,
+                "total_prompt_tokens": 0,
+                "total_completion_tokens": 0,
+                "session_prompt_tokens": 0,
+                "session_completion_tokens": 0,
+            }
+
+        tok["total_tokens"] = tok.get("total_tokens", 0) + total_tokens
+        tok["session_tokens"] = tok.get("session_tokens", 0) + total_tokens
+        tok["total_prompt_tokens"] = tok.get("total_prompt_tokens", 0) + prompt_tokens
+        tok["total_completion_tokens"] = tok.get("total_completion_tokens", 0) + completion_tokens
+        tok["session_prompt_tokens"] = tok.get("session_prompt_tokens", 0) + prompt_tokens
+        tok["session_completion_tokens"] = tok.get("session_completion_tokens", 0) + completion_tokens
+
         with open(tokens_path, "w", encoding="utf-8") as f:
             json.dump(tok, f, indent=2)
     except Exception as tok_err:
@@ -632,7 +649,11 @@ async def ollama_bridge(request: Request):
         # Track token usage
         try:
             if response.usage and response.usage.total_tokens:
-                _update_tokens(response.usage.total_tokens)
+                _update_tokens(
+                    response.usage.total_tokens,
+                    getattr(response.usage, "prompt_tokens", 0) or 0,
+                    getattr(response.usage, "completion_tokens", 0) or 0,
+                )
         except Exception:
             pass  # token tracking is non-critical
 
@@ -730,6 +751,41 @@ def kill_ollama():
         print(f"[SYSTEM WARNING]: Error while trying to kill Ollama: {e}")
 
 
+def shutdown_ollama():
+    """Best-effort Ollama shutdown used during backend exit.
+    Ensures both spawned child process and standalone Ollama processes are stopped."""
+    global ollama_proc
+    import subprocess
+
+    print("[SYSTEM]: Shutting down Ollama before backend exit...")
+
+    # First try graceful shutdown for the child process we spawned.
+    try:
+        if ollama_proc and ollama_proc.poll() is None:
+            ollama_proc.terminate()
+            try:
+                ollama_proc.wait(timeout=3)
+                print("[SYSTEM]: Spawned Ollama process stopped cleanly.")
+            except subprocess.TimeoutExpired:
+                print("[SYSTEM WARNING]: Spawned Ollama did not exit in time. Killing...")
+                ollama_proc.kill()
+    except Exception as e:
+        print(f"[SYSTEM WARNING]: Error while stopping spawned Ollama process: {e}")
+    finally:
+        ollama_proc = None
+
+    # Then enforce cleanup of common Ollama processes to avoid orphan instances.
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/f", "/im", "ollama.exe"], capture_output=True)
+            subprocess.run(["taskkill", "/f", "/im", "ollama app.exe"], capture_output=True)
+            subprocess.run(["taskkill", "/f", "/im", "ollama_llama_server.exe"], capture_output=True)
+        else:
+            subprocess.run(["pkill", "-f", "ollama"], capture_output=True)
+    except Exception as e:
+        print(f"[SYSTEM WARNING]: Error while force-cleaning Ollama processes: {e}")
+
+
 def start_ollama():
     global ollama_proc
     import subprocess
@@ -793,12 +849,4 @@ if __name__ == "__main__":
     try:
         uvicorn.run(app, host="127.0.0.1", port=11434)
     finally:
-        if ollama_proc and ollama_proc.poll() is None:
-            print("[SYSTEM]: Terminating background Ollama process...")
-            ollama_proc.terminate()
-            try:
-                ollama_proc.wait(timeout=3)
-                print("[SYSTEM]: Background Ollama process stopped cleanly.")
-            except subprocess.TimeoutExpired:
-                print("[SYSTEM WARNING]: Ollama did not exit cleanly. Killing it...")
-                ollama_proc.kill()
+        shutdown_ollama()
