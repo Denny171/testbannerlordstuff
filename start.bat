@@ -731,7 +731,7 @@ function Run-Installer {
     Draw-Banner
     Write-Host "  [3/$TOTAL]  Ollama model setup" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  Enter the Ollama model to pull (example: qwen2.5:7b-instruct)" -ForegroundColor DarkGray
+    Write-Host "  Enter the Ollama model to pull:" -ForegroundColor DarkGray
     Write-Host "  Press ENTER to use default: $defaultRouterModel" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  Model: " -NoNewline -ForegroundColor Cyan
