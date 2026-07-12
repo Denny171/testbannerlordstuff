@@ -115,6 +115,34 @@ function Save-Tokens($t) {
     $t | ConvertTo-Json | Out-File -FilePath $TokensPath -Encoding UTF8
 }
 
+function Start-GUI {
+    $guiExe = Join-Path $ScriptDir "bridgegui.exe"
+    $guiPy  = Join-Path $ScriptDir "bridgegui.py"
+
+    if (Test-Path $guiExe) {
+        try {
+            Start-Process -FilePath $guiExe -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+            return $true
+        } catch {
+            Write-Host "  Failed to launch bridgegui.exe: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    if (Test-Path $guiPy) {
+        $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
+        $pyExe = if ($pyCmd -and (Test-Path $pyCmd.Source)) { $pyCmd.Source } else { "python" }
+        try {
+            Start-Process -FilePath $pyExe -ArgumentList "`"$guiPy`"" -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
+            return $true
+        } catch {
+            Write-Host "  Failed to launch bridgegui.py: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    Write-Host "  GUI file not found (bridgegui.exe or bridgegui.py)." -ForegroundColor Yellow
+    return $false
+}
+
 function Draw-ConfigBlock($cfg) {
     Write-Host "  Current backend configuration:" -ForegroundColor DarkGray
     Write-Host ""
@@ -738,55 +766,25 @@ function Run-Installer {
     Set-Done 3 "$selectedRouterModel ready"
     Draw-InstallScreen
 
-    # --- STEP 4: Configuration Prompt ---
-    function Draw-ConfigPrompt {
-        Clear-Host
-        Draw-Banner
-        foreach ($s in ($Steps | Where-Object { $_.Idx -le 3 })) {
-            Write-Host ("  [{0}/{1}]  {2}" -f $s.Idx, $TOTAL, $s.Label).PadRight(46) -NoNewline -ForegroundColor White
-            Write-Host "OK   $($s.Detail)" -ForegroundColor Green
-        }
-        Write-Host ""
-        Write-Host "  -----------------------------------------------------------------" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "  [4/$TOTAL]  Choose your AI backend:" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "      [1]  Player 2    (local -- http://127.0.0.1:4315)" -ForegroundColor Cyan
-        Write-Host "      [2]  OpenRouter  (cloud API)" -ForegroundColor Magenta
-        Write-Host ""
-        Write-Host "  Your choice: " -NoNewline -ForegroundColor White
-    }
+    # --- STEP 4: Non-interactive configuration (Ollama model only) ---
+    $existingCfg = Load-Config
+    $modeVal = if ($existingCfg -and $existingCfg.mode) { "$($existingCfg.mode)" } else { "player2" }
+    $baseUrlVal = if ($existingCfg -and $existingCfg.base_url) { "$($existingCfg.base_url)" } else { "http://127.0.0.1:4315/v1" }
+    $apiKeyVal = if ($existingCfg -and $existingCfg.api_key) { "$($existingCfg.api_key)" } else { "" }
+    $modelVal = if ($existingCfg -and $existingCfg.model) { "$($existingCfg.model)" } else { "" }
+    $showInterceptsVal = if ($existingCfg -and ($null -ne $existingCfg.show_intercepts)) { [bool]$existingCfg.show_intercepts } else { $false }
+    $inputCostVal = if ($existingCfg -and ($null -ne $existingCfg.input_token_cost_per_m)) { [double]$existingCfg.input_token_cost_per_m } else { 0.0 }
+    $outputCostVal = if ($existingCfg -and ($null -ne $existingCfg.output_token_cost_per_m)) { [double]$existingCfg.output_token_cost_per_m } else { 0.0 }
 
-    Draw-ConfigPrompt
-    $backendChoice = Read-Host
-
-    if ($backendChoice -eq "2") {
-        Clear-Host
-        Draw-Banner
-        Write-Host "  [4/$TOTAL]  OpenRouter Configuration" -ForegroundColor Magenta
-        Write-Host ""
-        Write-Host "  Model name (e.g. openai/gpt-4o-mini):" -ForegroundColor Cyan
-        Write-Host "  > " -NoNewline -ForegroundColor Cyan
-        $orModel = Read-Host
-        Write-Host ""
-        Write-Host "  API key:" -ForegroundColor Cyan
-        Write-Host "  > " -NoNewline -ForegroundColor Cyan
-        $orKey = Read-Host
-        $cfg = [ordered]@{
-            mode     = "openrouter"
-            base_url = "https://openrouter.ai/api/v1"
-            api_key  = $orKey.Trim()
-            model    = $orModel.Trim()
-            router_model = $selectedRouterModel
-        }
-    } else {
-        $cfg = [ordered]@{
-            mode     = "player2"
-            base_url = "http://127.0.0.1:4315/v1"
-            api_key  = ""
-            model    = ""
-            router_model = $selectedRouterModel
-        }
+    $cfg = [ordered]@{
+        mode                  = $modeVal
+        base_url              = $baseUrlVal
+        api_key               = $apiKeyVal
+        model                 = $modelVal
+        router_model          = $selectedRouterModel
+        show_intercepts       = $showInterceptsVal
+        input_token_cost_per_m  = $inputCostVal
+        output_token_cost_per_m = $outputCostVal
     }
 
     try {
@@ -807,7 +805,7 @@ function Run-Installer {
         } catch {}
     }
 
-    Set-Done 4 "config.json saved (mode: $($cfg.mode))"
+    Set-Done 4 "config.json saved (router: $selectedRouterModel)"
     Draw-InstallScreen
 
     # Success Screen
@@ -817,12 +815,16 @@ function Run-Installer {
     Write-Host "  +---------------------------------------------------------------+" -ForegroundColor Green
     Write-Host "  |                                                               |" -ForegroundColor Green
     Write-Host "  |   OK   Installation complete!                                 |" -ForegroundColor Green
-    Write-Host "  |        Setup is ready. Let's start the bridge!                |" -ForegroundColor Green
+    Write-Host "  |        Setup is ready. Opening GUI...                         |" -ForegroundColor Green
     Write-Host "  |                                                               |" -ForegroundColor Green
     Write-Host "  +---------------------------------------------------------------+" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Press ENTER to start the Launcher Dashboard..."
-    Read-Host
+    Start-Sleep -Milliseconds 500
+    if (-not (Start-GUI)) {
+        Read-Host "  Press ENTER to close"
+        exit 1
+    }
+    exit 0
 }
 
 # ==============================================================
@@ -1134,10 +1136,4 @@ function Run-Launcher {
 # MAIN ROUTING
 # ==============================================================
 $cfg = Load-Config
-if ($cfg -eq $null -or -not (Test-Path (Join-Path $ScriptDir "backend.py"))) {
-    Run-Installer
-    # Run Launcher immediately after successful installation
-    Run-Launcher
-} else {
-    Run-Launcher
-}
+Run-Installer
