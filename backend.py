@@ -23,9 +23,10 @@ MAIN_MODEL_API_KEY = "sss"  # overridden by config.json
 TARGET_MODEL = "sss"        # overridden by config.json
 
 # 2. LOCAL AI ROUTER (Ollama OpenAI-compatible endpoint)
+# The router model below is the default and will be overridden by config.json when present.
 ROUTER_BASE_URL = "http://127.0.0.1:11435/v1"
 ROUTER_API_KEY = "ollama"
-ROUTER_MODEL = "qwen2.5:7b-instruct"
+ROUTER_MODEL = "qwen2.5:0.5b"
 ROUTER_TIMEOUT_SECONDS = 5
 ROUTER_CONFIDENCE_MIN = 0.55
 
@@ -68,7 +69,8 @@ def _load_config():
         raw_key = cfg.get("api_key", "") or "none"
         MAIN_MODEL_API_KEY  = raw_key
         TARGET_MODEL        = cfg.get("model", "") or "none"
-        ROUTER_MODEL        = cfg.get("router_model", ROUTER_MODEL)
+        router_model_from_config = cfg.get("router_model", ROUTER_MODEL)
+        ROUTER_MODEL        = router_model_from_config
         if "debug_mode" in cfg:
             DEBUG_MODE = bool(cfg.get("debug_mode"))
         # Re-create the client so it uses the values from config
@@ -77,6 +79,8 @@ def _load_config():
             f"[CONFIG]: Loaded config.json - mode={mode}, model='{TARGET_MODEL}', "
             f"router_model='{ROUTER_MODEL}', debug_mode={DEBUG_MODE}, url='{MAIN_MODEL_BASE_URL}'"
         )
+        if router_model_from_config != "qwen2.5:0.5b":
+            print(f"[CONFIG]: ROUTER_MODEL overridden by config.json -> '{ROUTER_MODEL}'")
     except Exception as cfg_err:
         print(f"[CONFIG WARNING]: Failed to read config.json: {cfg_err}. Using hardcoded defaults.")
 
@@ -698,6 +702,37 @@ def is_port_in_use(port: int) -> bool:
             return True
 
 
+def kill_process_on_port(port: int):
+    """Best-effort cleanup for a process listening on the given TCP port."""
+    import subprocess
+
+    if sys.platform != "win32":
+        return
+
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        pid = None
+        needle = f":{port} "
+        for line in result.stdout.splitlines():
+            if needle not in line:
+                continue
+            columns = line.split()
+            if len(columns) >= 5 and columns[-2] == "LISTENING":
+                pid = columns[-1]
+                break
+
+        if pid:
+            print(f"[SYSTEM]: Port {port} is in use. Attempting to kill PID {pid}...")
+            subprocess.run(["taskkill", "/f", "/pid", pid], capture_output=True)
+    except Exception as e:
+        print(f"[SYSTEM WARNING]: Could not free port {port}: {e}")
+
+
 def find_ollama_executable() -> str:
     import shutil
     path_exe = shutil.which("ollama")
@@ -831,6 +866,8 @@ if __name__ == "__main__":
         except Exception as qe_err:
             print(f"[SYSTEM WARNING]: Could not disable QuickEdit Mode: {qe_err}")
 
+    if is_port_in_use(11434):
+        kill_process_on_port(11434)
     if is_port_in_use(11435):
         kill_ollama()
     start_ollama()
