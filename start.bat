@@ -1164,5 +1164,22 @@ function Run-Launcher {
 # ==============================================================
 # MAIN ROUTING
 # ==============================================================
-$cfg = Load-Config
-Run-Installer
+Clear-Host
+Draw-Banner
+Write-Host "  What would you like to do?" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "    [1]  Start GUI instantly" -ForegroundColor Green
+Write-Host "    [2]  Run update / installer" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  Your choice (default 1): " -NoNewline -ForegroundColor White
+$startupChoice = Read-Host
+
+if ($startupChoice -eq "2") {
+    Run-Installer
+} else {
+    if (-not (Start-GUI)) {
+        Write-Host "  GUI could not be launched. Running installer/update instead..." -ForegroundColor Yellow
+        Start-Sleep -Milliseconds 900
+        Run-Installer
+    }
+}
