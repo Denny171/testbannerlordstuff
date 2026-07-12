@@ -119,16 +119,10 @@ function Start-GUI {
     $guiExe = Join-Path $ScriptDir "bridgegui.exe"
     $guiPy  = Join-Path $ScriptDir "bridgegui.py"
 
-    if (Test-Path $guiExe) {
-        try {
-            Start-Process -FilePath $guiExe -WorkingDirectory $ScriptDir -ErrorAction Stop | Out-Null
-            return $true
-        } catch {
-            Write-Host "  Failed to launch bridgegui.exe: $($_.Exception.Message)" -ForegroundColor Red
+    function Start-GuiPython {
+        if (-not (Test-Path $guiPy)) {
+            return $false
         }
-    }
-
-    if (Test-Path $guiPy) {
         $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
         $pyExe = if ($pyCmd -and (Test-Path $pyCmd.Source)) { $pyCmd.Source } else { "python" }
         try {
@@ -136,7 +130,34 @@ function Start-GUI {
             return $true
         } catch {
             Write-Host "  Failed to launch bridgegui.py: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
         }
+    }
+
+    if (Test-Path $guiExe) {
+        try {
+            $exeProc = Start-Process -FilePath $guiExe -WorkingDirectory $ScriptDir -PassThru -ErrorAction Stop
+            # Start-Process can succeed even if the app immediately crashes (e.g. 0xc0000142).
+            Start-Sleep -Milliseconds 1200
+            $exeProc.Refresh()
+            if (-not $exeProc.HasExited) {
+                return $true
+            }
+
+            Write-Host "  bridgegui.exe exited immediately (code $($exeProc.ExitCode)). Falling back to Python GUI..." -ForegroundColor Yellow
+            if (Start-GuiPython) {
+                return $true
+            }
+        } catch {
+            Write-Host "  Failed to launch bridgegui.exe: $($_.Exception.Message)" -ForegroundColor Red
+            if (Start-GuiPython) {
+                return $true
+            }
+        }
+    }
+
+    if (Start-GuiPython) {
+        return $true
     }
 
     Write-Host "  GUI file not found (bridgegui.exe or bridgegui.py)." -ForegroundColor Yellow
