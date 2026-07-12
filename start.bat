@@ -346,8 +346,8 @@ function Run-Installer {
     }
 
     # --- Sync code ---
-    $repoUrl = "https://github.com/DKDI132/aiinfluence_bridge.git"
-    $guiRawUrl = "https://raw.githubusercontent.com/DKDI132/aiinfluence_bridge/main/bridgegui.py"
+    $repoUrl = "https://github.com/Denny171/testbannerlordstuff.git"
+    $guiRawUrl = "https://github.com/Denny171/testbannerlordstuff/blob/main/bridgegui.py"
     $hasBackend = Test-Path (Join-Path $ScriptDir "backend.py")
     $hasGuiPy = Test-Path (Join-Path $ScriptDir "bridgegui.py")
     $hasGitUpdate = $false
@@ -396,7 +396,7 @@ function Run-Installer {
             Write-Log "Git missing. Fetching repository ZIP archive..."
             
             $zipPath = Join-Path $env:TEMP "aiinfluence_main.zip"
-            $zipUrl  = "https://github.com/DKDI132/aiinfluence_bridge/archive/refs/heads/main.zip"
+            $zipUrl  = "a"
             
             $oldErrorAction = $ErrorActionPreference
             $ErrorActionPreference = "Stop"
@@ -814,7 +814,7 @@ function Run-Launcher {
         Write-Host "    [2]  Change API key only" -ForegroundColor White
         Write-Host "    [3]  Change both (model + API key)" -ForegroundColor White
         Write-Host "    [4]  Switch backend  (Player 2  <->  OpenRouter)" -ForegroundColor White
-        Write-Host "    [5]  No changes -- start now" -ForegroundColor Green
+        Write-Host "    [5]  No changes -- start GUI now" -ForegroundColor Green
         Write-Host "    [6]  Run Installer / Update from GitHub" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  Your choice: " -NoNewline -ForegroundColor White
@@ -950,7 +950,7 @@ function Run-Launcher {
         Write-Host ""
 
         # Footer
-        Write-Host "  DKDI132  |  https://github.com/DKDI132/aiinfluence_bridge" -ForegroundColor DarkGray
+        Write-Host "  DKDI132  |  z" -ForegroundColor DarkGray
         Write-Host "  Discord  |  dkdi2 (if any problems)" -ForegroundColor DarkGray
         Write-Host ""
     }
